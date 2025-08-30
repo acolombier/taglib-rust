@@ -40,7 +40,6 @@ fn build_env() {
     }
 
     println!("cargo:rustc-link-lib={}={}", kind, "tag_c");
-    println!("cargo:rustc-link-lib={}={}", kind, "tag");
 }
 
 fn get_extra_libs() -> HashSet<String> {

@@ -148,9 +148,9 @@ pub struct TagLib_Variant {
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub union TagLib_Variant_Value_Union {
-    pub string_value: *mut c_char,
-    pub byte_vector_value: *mut c_char,
-    pub string_list_value: *mut *mut c_char,
+    pub string_value: *const c_char,
+    pub byte_vector_value: *const c_char,
+    pub string_list_value: *const *const c_char,
     pub bool_value: c_int,
     pub int_value: c_int,
     pub u_int_value: c_uint,
@@ -165,7 +165,7 @@ this structure with \\e key and \\e value."]
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct TagLib_Complex_Property_Attribute {
-    pub key: *mut c_char,
+    pub key: *const c_char,
     pub value: TagLib_Variant,
 }
 
@@ -189,7 +189,7 @@ extern "C" {
     pub fn taglib_complex_property_set(
         file: *mut TagLib_File,
         key: *const c_char,
-        value: *mut *const TagLib_Complex_Property_Attribute,
+        value: *const *const TagLib_Complex_Property_Attribute,
     ) -> c_int;
 
     #[doc = " Appends \\a value to the complex property \\a key (sets it if non-existing).\n \
