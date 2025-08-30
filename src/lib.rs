@@ -23,12 +23,18 @@
 
 extern crate libc;
 extern crate taglib_sys as sys;
+use std::ffi::{CStr, CString};
+use std::path::Path;
+use std::ptr::{null, null_mut};
+use std::{mem, ptr, slice};
 
 use libc::c_char;
-use std::ffi::{CString, CStr};
-use std::path::Path;
-
 use sys as ll;
+use sys::{
+    TAGLIB_VARIANT_TYPE_TAGLIB_VARIANT_BYTE_VECTOR, TAGLIB_VARIANT_TYPE_TAGLIB_VARIANT_STRING,
+    TagLib_Complex_Property_Attribute, TagLib_Complex_Property_Picture_Data, TagLib_Variant,
+    TagLib_Variant_Value_Union,
+};
 
 fn c_str_to_str(c_str: *const c_char) -> Option<String> {
     if c_str.is_null() {
@@ -36,7 +42,11 @@ fn c_str_to_str(c_str: *const c_char) -> Option<String> {
     } else {
         let bytes = unsafe { CStr::from_ptr(c_str).to_bytes() };
 
-        if bytes.is_empty() { None } else { Some(String::from_utf8_lossy(bytes).to_string()) }
+        if bytes.is_empty() {
+            None
+        } else {
+            Some(String::from_utf8_lossy(bytes).to_string())
+        }
     }
 }
 
@@ -195,6 +205,8 @@ impl<'a> AudioProperties<'a> {
     }
 }
 
+const MUT_PTR_C_CHAR_LEN: usize = mem::size_of::<*mut c_char>();
+
 #[derive(Copy, Clone, PartialEq)]
 pub enum FileType {
     /// MPEG file
@@ -217,6 +229,53 @@ pub enum FileType {
     MP4 = ll::TAGLIB_FILE_MP4 as isize,
     /// ASF file
     ASF = ll::TAGLIB_FILE_ASF as isize,
+    /// AIFF file
+    AIFF = ll::TAGLIB_FILE_AIFF as isize,
+    /// WAV file
+    WAV = ll::TAGLIB_FILE_WAV as isize,
+    /// APE file
+    APE = ll::TAGLIB_FILE_APE as isize,
+    /// IT file
+    IT = ll::TAGLIB_FILE_IT as isize,
+    /// MOD file
+    MOD = ll::TAGLIB_FILE_MOD as isize,
+    /// S3M file
+    S3M = ll::TAGLIB_FILE_S3M as isize,
+    /// XM file
+    XM = ll::TAGLIB_FILE_XM as isize,
+    /// OPUS file
+    OPUS = ll::TAGLIB_FILE_OPUS as isize,
+    /// DSF file
+    DSF = ll::TAGLIB_FILE_DSF as isize,
+    /// DSDIFF file
+    DFF = ll::TAGLIB_FILE_DSDIFF as isize,
+}
+
+impl std::fmt::Display for FileType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {        
+        write!(f, "{}", match self {
+            FileType::MPEG => "MPEG",
+            FileType::OggVorbis => "OggVorbis",
+            FileType::FLAC => "FLAC",
+            FileType::MPC => "MPC",
+            FileType::OggFlac => "OggFlac",
+            FileType::WavPack => "WavPack",
+            FileType::Speex => "Speex",
+            FileType::TrueAudio => "TrueAudio",
+            FileType::MP4 => "MP4",
+            FileType::ASF => "ASF",
+            FileType::AIFF => "AIFF",
+            FileType::WAV => "WAV",
+            FileType::APE => "APE",
+            FileType::IT => "IT",
+            FileType::MOD => "MOD",
+            FileType::S3M => "S3M",
+            FileType::XM => "XM",
+            FileType::OPUS => "OPUS",
+            FileType::DSF => "DSF",
+            FileType::DFF => "DFF",
+        })
+    }
 }
 
 #[derive(Debug)]
@@ -235,6 +294,34 @@ impl Drop for File {
     fn drop(&mut self) {
         unsafe {
             ll::taglib_file_free(self.raw);
+        }
+    }
+}
+
+const KEY_PICTURE: &'static str = "PICTURE";
+
+#[cfg(feature = "ni-stem")]
+const KEY_STEM: &'static str = "STEM";
+
+#[derive(Debug)]
+pub struct AttachedPicture {
+    pub mime_type: String,
+    pub description: String,
+    pub picture_type: String,
+    pub data: Vec<u8>,
+}
+impl AttachedPicture {
+    pub fn new(
+        mime_type: String,
+        description: String,
+        picture_type: String,
+        data: Vec<u8>,
+    ) -> Self {
+        Self {
+            mime_type,
+            description,
+            picture_type,
+            data,
         }
     }
 }
@@ -303,12 +390,217 @@ impl File {
         }
     }
 
+    pub fn complex_property_keys(&self) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        let keys = unsafe { ll::taglib_complex_property_keys(self.raw) };
+        if keys.is_null() {
+            Ok(Vec::new())
+        } else {
+            let mut res: Vec<String> = vec![];
+            let mut p = keys;
+            while unsafe { p.as_ref().ok_or("unexpected data")?.as_ref() }.is_some() {
+                unsafe {
+                    res.push(CStr::from_ptr(*p).to_str()?.to_owned());
+                    p = p.byte_offset(MUT_PTR_C_CHAR_LEN as isize);
+                }
+            }
+            Ok(res)
+        }
+    }
+
+    pub fn pictures(&self) -> Result<Vec<AttachedPicture>, Box<dyn std::error::Error>> {
+        let cs = CString::new(KEY_PICTURE)?;
+        let props = unsafe { ll::taglib_complex_property_get(self.raw, cs.as_ptr()) };
+
+        let mut data = if props.is_null() {
+            Vec::new()
+        } else {
+            let mut res: Vec<TagLib_Complex_Property_Picture_Data> = vec![];
+            let mut p = props;
+            while unsafe { p.as_ref().ok_or("unexpected data")?.as_ref() }.is_some() {
+                res.push(TagLib_Complex_Property_Picture_Data {
+                    mime_type: null_mut(),
+                    description: null_mut(),
+                    picture_type: null_mut(),
+                    data: null_mut(),
+                    size: 0,
+                });
+                unsafe {
+                    ll::taglib_picture_from_complex_property(
+                        props,
+                        res.last_mut().ok_or("unexpected data")?,
+                    );
+                    p = p.byte_offset(MUT_PTR_C_CHAR_LEN as isize);
+                }
+            }
+            res
+        };
+
+        if data.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let res = data
+            .iter_mut()
+            .map(|tl| {
+                let description = c_str_to_str(tl.description).unwrap_or("".to_owned());
+                let picture_type = c_str_to_str(tl.picture_type).unwrap_or("".to_owned());
+                let mime_type = c_str_to_str(tl.mime_type).unwrap_or("".to_owned());
+                let data: Vec<u8> =
+                    unsafe { slice::from_raw_parts(tl.data as *const u8, tl.size as usize) }.into();
+
+                AttachedPicture {
+                    description,
+                    picture_type,
+                    mime_type,
+                    data: data.clone(),
+                }
+            })
+            .collect();
+
+        unsafe {
+            ll::taglib_complex_property_free(props);
+        }
+        Ok(res)
+    }
+
+    pub fn set_pictures(
+        &mut self,
+        picture: Vec<AttachedPicture>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let key_data_cstr = CString::new("data")?;
+        let key_mime_type_cstr = CString::new("mimeType")?;
+        let key_description_cstr = CString::new("description")?;
+        let key_picture_type_cstr = CString::new("pictureType")?;
+
+        let cs = CString::new(KEY_PICTURE)?;
+        unsafe {
+            ll::taglib_complex_property_set(self.raw, cs.as_ptr(), null());
+        }
+
+        for picture in picture {
+            let mime_type = CString::new(picture.mime_type)?;
+            let description = CString::new(picture.description)?;
+            let picture_type = CString::new(picture.picture_type)?;
+            let data = TagLib_Complex_Property_Attribute {
+                key: key_data_cstr.as_ptr(),
+                value: TagLib_Variant {
+                    r#type: TAGLIB_VARIANT_TYPE_TAGLIB_VARIANT_BYTE_VECTOR,
+                    size: picture.data.len() as u32,
+                    value: TagLib_Variant_Value_Union {
+                        byte_vector_value: picture.data.as_ptr() as *const c_char,
+                    },
+                },
+            };
+            let mime_type = TagLib_Complex_Property_Attribute {
+                key: key_mime_type_cstr.as_ptr(),
+                value: TagLib_Variant {
+                    r#type: TAGLIB_VARIANT_TYPE_TAGLIB_VARIANT_STRING,
+                    size: 0,
+                    value: TagLib_Variant_Value_Union {
+                        string_value: mime_type.as_ptr(),
+                    },
+                },
+            };
+            let description = TagLib_Complex_Property_Attribute {
+                key: key_description_cstr.as_ptr(),
+                value: TagLib_Variant {
+                    r#type: TAGLIB_VARIANT_TYPE_TAGLIB_VARIANT_STRING,
+                    size: 0,
+                    value: TagLib_Variant_Value_Union {
+                        string_value: description.as_ptr(),
+                    },
+                },
+            };
+            let picture_type = TagLib_Complex_Property_Attribute {
+                key: key_picture_type_cstr.as_ptr(),
+                value: TagLib_Variant {
+                    r#type: TAGLIB_VARIANT_TYPE_TAGLIB_VARIANT_STRING,
+                    size: 0,
+                    value: TagLib_Variant_Value_Union {
+                        string_value: picture_type.as_ptr(),
+                    },
+                },
+            };
+            let argv: Vec<*const TagLib_Complex_Property_Attribute> =
+                vec![&data, &mime_type, &description, &picture_type, ptr::null()];
+            unsafe {
+                ll::taglib_complex_property_set_append(self.raw, cs.as_ptr(), argv.as_ptr());
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "ni-stem")]
+    pub fn stem(&self) -> Result<Option<String>, Box<dyn std::error::Error>> {
+        let cs = CString::new(KEY_STEM)?;
+        let props = unsafe { ll::taglib_complex_property_get(self.raw, cs.as_ptr()) };
+
+        let data = if props.is_null() {
+            None
+        } else {
+            if let Some(p) = unsafe { props.as_ref().ok_or("unexpected data")?.as_ref() } {
+                unsafe {
+                    let attr = *(*p);
+                    if attr.value.value.byte_vector_value.is_null() {
+                        None
+                    } else {
+                        let manifest: Vec<u8> = unsafe { slice::from_raw_parts(attr.value.value.byte_vector_value as *const u8, attr.value.size as usize) }.into();
+                        String::from_utf8(manifest).ok()
+                    }
+                }
+            } else {
+                None
+            }
+        };
+
+        unsafe {
+            ll::taglib_complex_property_free(props);
+        }
+        Ok(data)
+    }
+
+    #[cfg(feature = "ni-stem")]
+    pub fn set_stem(&mut self, data: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
+        let key_manifest_cstr = CString::new("manifest").unwrap();
+
+        let cs = CString::new(KEY_STEM)?;
+        if data.is_none() {
+            unsafe {
+                ll::taglib_complex_property_set(self.raw, cs.as_ptr(), null());
+            }
+            return Ok(())
+        }
+
+        let (manifest_cstr, size) = if let Some(manifest) = data {
+            let len = manifest.len();
+            (CString::new(manifest)?, len as u32)
+        } else {
+            unreachable!("none value should be handled above");
+        };
+
+        let data = TagLib_Complex_Property_Attribute {
+            key: key_manifest_cstr.as_ptr(),
+            value: TagLib_Variant {
+                r#type: TAGLIB_VARIANT_TYPE_TAGLIB_VARIANT_BYTE_VECTOR,
+                size: size,
+                value: TagLib_Variant_Value_Union {
+                    byte_vector_value: manifest_cstr.as_ptr(),
+                },
+            },
+        };
+
+        let argv: [*const TagLib_Complex_Property_Attribute; 2] = [&data, ptr::null()];
+        unsafe {
+            ll::taglib_complex_property_set(self.raw, cs.as_ptr(), argv.as_ptr());
+        }
+        Ok(())
+    }
+
     /// Updates the meta-data of the file.
     pub fn save(&self) -> bool {
         unsafe { ll::taglib_file_save(self.raw) != 0 }
     }
 }
-
 
 /// Fixture creation:
 /// ffmpeg -t 0.01 -f s16le -i /dev/zero test.mp3
@@ -316,6 +608,8 @@ impl File {
 #[cfg(test)]
 mod test {
     const TEST_MP3: &'static str = "fixtures/test.mp3";
+    const TEST_FLAC: &'static str = "fixtures/test.flac";
+    const TEST_COVER: &'static str = "fixtures/pic.jpg";
 
     use super::*;
     use std::fs;
@@ -372,5 +666,65 @@ mod test {
         assert_eq!(tag.artist().unwrap(), "Not Artist");
 
         fs::remove_file(temp_fn).unwrap();
+    }
+
+    #[test]
+    fn test_pictures() {
+        let file = File::new(TEST_FLAC).unwrap();
+        match file.pictures().unwrap().first() {
+            Some(pic) => {
+                assert_eq!(pic.mime_type, "image/jpg");
+                assert_eq!(pic.description, "");
+                assert_eq!(pic.picture_type, "Front Cover");
+                assert_eq!(pic.data.len(), 456826);
+            }
+            None => {
+                // fail!
+                assert!(false);
+            }
+        }
+    }
+
+    #[test]
+    fn test_add_picture() {
+        let temp_fn = std::env::temp_dir().join("test_add_picture.flac");
+        fs::copy(TEST_FLAC, &temp_fn).unwrap();
+        let mut file = File::new(&temp_fn).unwrap();
+
+        let data: Vec<u8> = fs::read(TEST_COVER).unwrap();
+        let len: usize = data.len();
+        file.set_pictures(vec![AttachedPicture::new("image/jpeg".to_string(), "".to_string(), "Front Cover".to_string(), data)]).unwrap();
+        file.save();
+
+        let file = File::new(&temp_fn).unwrap();
+
+        let covers = file.pictures().unwrap();
+        assert_eq!(covers.len(), 1);
+        let pic = covers.first().unwrap();
+        assert_eq!(pic.mime_type, "image/jpeg");
+        assert_eq!(pic.picture_type, "Front Cover");
+        assert_eq!(pic.description, "");
+        assert_eq!(pic.data.len(), len);
+    }
+
+    #[test]
+    fn test_remove_pic() {
+        let temp_fn = std::env::temp_dir().join("test_remove_pic.flac");
+        fs::copy(TEST_FLAC, &temp_fn).unwrap();
+        let mut file = File::new(&temp_fn).unwrap();
+
+        let result = file.set_pictures(vec![]);
+        assert!(
+            result.is_ok(),
+            "Expected value to match pattern, but got: {:?}",
+            result
+        );
+        file.save();
+
+        let file = File::new(&temp_fn).unwrap();
+        let res = file.pictures().unwrap();
+        assert!(res.is_empty());
+
+        fs::remove_file(&temp_fn).unwrap();
     }
 }

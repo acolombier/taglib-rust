@@ -1,7 +1,8 @@
 [package]
 name = "taglib"
 description = "Rust bindings for TagLib"
-version = "1.0.0"
+version = "2.1.1"
+edition = "2024"
 authors = ["Emmanuele Bassi <ebassi@gnome.org>", "Chris Down <chris@chrisdown.name>"]
 license = "MIT"
 repository = "https://github.com/ebassi/taglib-rust/"
@@ -18,8 +19,10 @@ libc = "0.2"
 
 [dependencies.taglib-sys]
 path = "taglib-sys"
-version = "1.0.0"
+version = "2.1.1"
 
 [features]
 default = []
 use-pkgconfig = ["taglib-sys/use-pkgconfig"]
+static = ["taglib-sys/static"]
+ni-stem = []

@@ -5,6 +5,11 @@ fn main() {
     if !build_pkgconfig() {
         println!("cargo:rustc-flags=-l tag_c -l tag");
     }
+    #[cfg(feature = "static")]
+    {
+        println!("cargo:rustc-link-lib=static=tag_c");
+        println!("cargo:rustc-link-lib=static=tag");
+    }
 }
 
 #[cfg(not(feature = "pkg-config"))]
